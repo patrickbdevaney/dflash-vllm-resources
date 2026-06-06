@@ -1,0 +1,52 @@
+# qwen36-dflash-config.yaml  —  CORRECTED to match the drafter's official README
+# DFlash block-diffusion spec decoding for Qwen3.6-35B-A3B-NVFP4 on Thor SM110.
+#
+# CORRECTIONS vs the original brief:
+#  - Official launch (drafter README) sets ONE global `--attention-backend flash_attn`,
+#    NOT target=flashinfer + a per-drafter `attention_backend` key. vLLM applies the
+#    attention backend globally; the drafter's non-causal requirement is why the WHOLE
+#    server runs flash_attn. So `attention_backend` is removed from speculative_config
+#    and set on the CLI instead (see serve-dflash.sh).
+#  - OPEN QUESTION to test after build: your prod NVFP4 target prefers flashinfer for
+#    its MoE path. Forcing flash_attn globally may cost some target throughput. If the
+#    benchmark underperforms, we test whether a flashinfer target + flash_attn drafter
+#    is actually supported on this build (the README implies it is not, today).
+host: 0.0.0.0
+port: 8001
+gpu_memory_utilization: 0.50   # raised from 0.32: DFlash adds a separate drafter model
+                               # + its own KV, so 0.32 left only 4.69 GiB KV (max len ~77k).
+                               # 0.50 of 117 GiB unified (~58 GiB) leaves ample KV for 262k.
+max_model_len: 262144
+max_num_seqs: 1
+max_num_batched_tokens: 32768
+enable_chunked_prefill: true
+quantization: compressed-tensors
+kv_cache_dtype: auto          # BF16 — DFlash rejects quantized/FP8 KV for non-causal draft attn
+tokenizer_mode: hf
+reasoning_parser: qwen3
+default_chat_template_kwargs:
+  enable_thinking: true
+enable_auto_tool_choice: true
+tool_call_parser: qwen3_coder
+trust_remote_code: true        # REQUIRED — drafter uses auto_map -> dflash.DFlashDraftModel
+enable_prefix_caching: false   # keep off until verified with DFlash + hybrid attn
+
+# ── DFlash speculative decoding ───────────────────────────────────────────────
+# block_size=16 -> num_speculative_tokens=15. Do not exceed 15 (drafter is block-16 trained).
+# NOTE: attention_backend is NOT set here — it is global via --attention-backend flash_attn.
+speculative_config:
+  method: dflash
+  model: /drafter               # drafter mounted at container path /drafter
+  num_speculative_tokens: 15
+
+# ── CUDA graphs ───────────────────────────────────────────────────────────────
+# Every capture size MUST be a multiple of (num_speculative_tokens+1)=16.
+compilation_config:
+  cudagraph_mode: PIECEWISE
+  cudagraph_capture_sizes:
+    - 16
+    - 32
+    - 48
+    - 64
+    - 128
+    - 256

@@ -1,0 +1,88 @@
+# Dockerfile.dflash-thor  —  CORRECTED build plan (see dryrun notes below)
+#
+# WHY THIS DIFFERS FROM THE ORIGINAL BRIEF:
+#   - The brief assumed DFlash lived in "mainline vLLM >=0.20.0" and that only
+#     vllm_flash_attn needed compiling (45-90 min). Phase-detect proved otherwise:
+#       * stock latest-jetson-thor = vLLM 0.19.0 (no DFlash module)
+#       * DFlash landed on `main` AFTER 0.19.0; PR #40898 adds SWA on top
+#       * 0.19.0 -> PR#40898 head = 1138 commits ahead, 165 C++/CUDA files changed
+#       * => a Python overlay on the 0.19.0 .so is impossible (C++ ABI diverged)
+#       * => a FULL from-source vLLM build for sm_110 is required
+#   - The brief's Dockerfile cloned tag v0.19.0 then `git merge`d the PR. That
+#     cannot work (merging 1138-commits-ahead main onto a shallow 0.19.0 tag).
+#     Correct approach: check out PR #40898 head directly and build it whole.
+#
+# WHAT WE REUSE FROM THE BASE IMAGE (confirmed by phase-detect):
+#   - CUDA 13.0 toolchain; ptxas accepts sm_110 AND sm_110a (verified)
+#   - cmake 3.31, ninja 1.13, gcc 13.3, python 3.12  (all satisfy PR requirements)
+#   - torch 2.10.0 / cu13  (NOTE: PR head pins torch==2.11.0 — see RISK below)
+#
+# RISK (surfaced by dry-run): PR head requirements/cuda.txt pins torch==2.11.0 and
+#   CMakeLists sets TORCH_SUPPORTED_VERSION_CUDA "2.11.0". We keep the image's
+#   torch 2.10.0 via use_existing_torch.py. vLLM normally only WARNS on a torch
+#   minor mismatch, but PR-head source may use 2.11-only APIs. The dry-run cmake
+#   configure (dryrun-configure.log) is the go/no-go gate for this.
+
+FROM ghcr.io/nvidia-ai-iot/vllm:latest-jetson-thor
+
+# ── SM110 build flags ──────────────────────────────────────────────────────────
+ENV TORCH_CUDA_ARCH_LIST="11.0a" \
+    CUDA_HOME=/usr/local/cuda \
+    MAX_JOBS=8 \
+    NVCC_THREADS=2 \
+    CMAKE_BUILD_PARALLEL_LEVEL=8 \
+    VLLM_FLASH_ATTN_VERSION=3 \
+    VLLM_USE_FLASHINFER_MOE_FP4=0 \
+    SETUPTOOLS_SCM_PRETEND_VERSION=0.20.0.dev0+dflash \
+    PIP_NO_BUILD_ISOLATION=0
+
+# ── Build deps (most already in base; explicit for reproducibility) ────────────
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+    git curl ccache && rm -rf /var/lib/apt/lists/*
+
+# ── Check out PR #40898 head directly (DFlash + SWA), full history NOT needed ──
+WORKDIR /build
+RUN git init vllm && cd vllm && \
+    git remote add origin https://github.com/vllm-project/vllm.git && \
+    git fetch --depth=1 origin refs/pull/40898/head && \
+    git checkout FETCH_HEAD && \
+    echo "PR head: $(git rev-parse --short HEAD)"
+
+WORKDIR /build/vllm
+
+# ── Keep the image's torch 2.10 instead of pulling 2.11 (aarch64 has no 2.11 wheel) ──
+RUN python use_existing_torch.py && \
+    python - <<'PY'
+import torch
+print("building against torch", torch.__version__, "cuda", torch.version.cuda)
+PY
+
+# ── Full from-source build for sm_110 (this is the multi-hour step) ────────────
+# --no-build-isolation reuses the image's torch/cmake/ninja (critical on aarch64).
+# This compiles _C, _moe_C, cutlass kernels, AND vllm-flash-attn for sm_110.
+# Build deps live in pyproject [build-system].requires; the base image already has
+# all of them EXCEPT setuptools-scm (cmake/ninja/setuptools/wheel/jinja2/torch present).
+# NOTE: full output preserved (no tail) so a multi-hour failure is diagnosable.
+RUN pip install "setuptools-scm>=8.0" && \
+    pip install --no-build-isolation --no-deps -v .
+
+# ── Verify (filesystem only) ──────────────────────────────────────────────────
+# Do NOT `import vllm` here: the compiled _C.so references CUDA *driver* symbols
+# (e.g. cuPointerGetAttribute) that are only injected at runtime via
+# `--runtime nvidia`. During `docker build` there is no driver, so an import would
+# always fail even on a perfectly good build. So we check artifacts on disk; the
+# real import/DFlash test is done post-build by running with --runtime nvidia.
+WORKDIR /root
+RUN set -e; \
+    SP=$(python -c "import sysconfig;print(sysconfig.get_paths()['purelib'])"); \
+    echo "site-packages: $SP"; \
+    echo "--- compiled extensions ---"; \
+    ls -la "$SP/vllm/_C.abi3.so" "$SP/vllm/_moe_C.abi3.so" \
+           "$SP/vllm/vllm_flash_attn/_vllm_fa2_C.abi3.so" \
+           "$SP/vllm/vllm_flash_attn/_vllm_fa3_C.abi3.so"; \
+    echo "--- DFlash files ---"; \
+    test -f "$SP/vllm/v1/spec_decode/dflash.py" && echo "OK dflash proposer"; \
+    test -f "$SP/vllm/model_executor/models/qwen3_dflash.py" && echo "OK qwen3_dflash model"; \
+    echo "--- sm_110 SASS in _C.abi3.so ---"; \
+    (cuobjdump -lelf "$SP/vllm/_C.abi3.so" 2>/dev/null | grep -oiE "sm_[0-9]+" | sort -u | tr '\n' ' '; echo); \
+    echo "BUILD FS-CHECK OK (runtime import requires --runtime nvidia)"

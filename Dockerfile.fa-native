@@ -1,0 +1,8 @@
+# Swap our arch-deficient flash-attn .so (sm_80/sm_75 only) for the stock Jetson-Thor
+# image's NATIVE sm_110 binaries. The FA C++ op symbols are identical between the two
+# (verified via nm), so this is an arch-only swap, not an ABI change.
+FROM vllm-dflash-thor:latest
+COPY --from=ghcr.io/nvidia-ai-iot/vllm:latest-jetson-thor \
+  /opt/venv/lib/python3.12/site-packages/vllm/vllm_flash_attn/_vllm_fa2_C.abi3.so \
+  /opt/venv/lib/python3.12/site-packages/vllm/vllm_flash_attn/_vllm_fa3_C.abi3.so \
+  /opt/venv/lib/python3.12/site-packages/vllm/vllm_flash_attn/
