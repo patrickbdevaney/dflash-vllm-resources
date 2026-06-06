@@ -101,3 +101,43 @@ fast tokenizer (vocab 248044). Fix: serve-27b.sh builds a patched overlay
 The plan's Step 1 used `docker stop` and Step 5 said to document "docker stop not docker
 kill". This is BACKWARDS. On Thor, `docker stop` hangs and leaks page cache. Correct rule:
 stop with `docker kill` (instant SIGKILL) or `pkill -9 -f "vllm serve"`, then drop caches.
+
+================================================================================
+## 122B-A10B-NVFP4 + DFlash — SOLVED (2026-06-06)  [the "see note" above]
+================================================================================
+The 122B (256 experts x 48 layers) crashed for weeks. Root cause was NOT DFlash, NOT SWA,
+NOT OOM, NOT the draft model. Proven by reproducing the crash with the BASE model alone
+(no speculative config): silent exit 255, no traceback, no OOM (Docker OOMKilled=false, no
+host kernel OOM line), dying at exactly `nvfp4.py:491 Using MoEPrepareAndFinalizeNoDPEPModular`
+i.e. the **Marlin NVFP4 MoE weight-repack** step.
+
+ROOT CAUSE: the Marlin FP4 MoE kernel FAULTS at 256-expert scale on Thor SM110a. cuobjdump
+confirms _moe_C.abi3.so DOES contain sm_110a (not a missing-kernel-image problem) and the MoE
+dims are 128-aligned (not the #38022 alignment bug) -> a genuine in-kernel fault at scale,
+matching open vLLM bugs #35566/#35519/#35922. A rebuild does not fix it.
+
+THE FIX: move the MoE off marlin onto **cutlass**, and the attention off flashinfer onto
+**TRITON_ATTN**:
+  --moe-backend cutlass        (marlin crashes at 256 experts; cutlass processes them cleanly,
+                                70.46 GiB, no crash. NOTE: opposite of the 35B finding above
+                                where marlin was fine — marlin only faults at large expert count.)
+  --attention-backend TRITON_ATTN  (cutlass + flashinfer dies in attention warmup:
+                                "BatchDecodeWithPagedKVCacheWrapper.run() got an unexpected
+                                keyword argument 'kv_cache_sf'" — a flashinfer API mismatch.)
+  --moe-backend triton -> REJECTED ("not supported for NvFP4 MoE"); never an option.
+  gpu-memory-utilization 0.78  (DFlash draft eats ~2 GiB KV; 0.72 fails the 16384 KV request
+                                "estimated max length 8960"; 0.90 trips the startup precheck
+                                needs 110.5 > ~108 GiB free).
+  speculative-config: {"method":"dflash","num_speculative_tokens":12,"model":"/draft",
+                       "max_model_len":1024}   (cap draft KV so it doesn't starve target KV)
+
+## 122B decode benchmark (cutlass MoE + TRITON_ATTN, DFlash k=12, gpu_util 0.78, max_len 16384)
+Base (no DFlash): 10.9 tok/s (cold, Dijkstra).  GPU KV cache 70,924 tokens, concurrency 4.33x.
+| Task     | 122B-A10B +DFlash tok/s | tau  |
+|----------|------------------------:|-----:|
+| sorting  |                    27.2 | 6.45 |
+| lru      |                    42.3 | 5.18 |
+| dijkstra |                    34.7 | 4.20 |
+| mixed    |                    38.0 | 4.66 |
+DFlash uplift on Dijkstra: 34.7 warm vs 10.9 cold base. Acceptance tau 4.2-6.5 (healthy).
+Image vllm-dflash-thor:fa-native. Stable, health 200, coherent output, finish_reason ok.

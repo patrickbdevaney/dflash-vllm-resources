@@ -22,6 +22,8 @@ FP4="${VLLM_USE_FLASHINFER_MOE_FP4:-0}"
 MOE_BACKEND="${MOE_BACKEND:-}"
 LOAD_FORMAT="${LOAD_FORMAT:-}"          # e.g. "fastsafetensors" for 122B unified-memory safety
 ENFORCE_EAGER="${ENFORCE_EAGER:-0}"     # set to 1 to skip CUDA graph capture (first 122B launch)
+ATTENTION_BACKEND="${ATTENTION_BACKEND:-flash_attn}"  # 122B needs TRITON_ATTN (flashinfer kv_cache_sf bug)
+DRAFT_MAX_LEN="${DRAFT_MAX_LEN:-}"      # cap draft model KV (122B: 1024) so it doesn't starve target KV
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-900}"   # seconds to wait for /health
 
 [ -f "$MODEL_DIR/config.json" ] || { echo "ERROR: base model config not found: $MODEL_DIR"; exit 1; }
@@ -56,6 +58,18 @@ CONTAINER="vllm-dflash-$(date +%s)"
 MOE_ARG="";         [ -n "$MOE_BACKEND" ]       && MOE_ARG="--moe-backend $MOE_BACKEND"
 LOAD_FORMAT_ARG=""; [ -n "$LOAD_FORMAT" ]        && LOAD_FORMAT_ARG="--load-format $LOAD_FORMAT"
 EAGER_ARG="";       [ "${ENFORCE_EAGER}" = "1" ] && EAGER_ARG="--enforce-eager"
+# COMPILATION_CONFIG: JSON string, e.g. '{"cudagraph_capture_sizes":[1,13]}' for GDA/Mamba models
+COMPILATION_CONFIG="${COMPILATION_CONFIG:-}"
+COMPILATION_CONFIG_ARGS=()
+[ -n "$COMPILATION_CONFIG" ] && COMPILATION_CONFIG_ARGS=(--compilation-config "$COMPILATION_CONFIG")
+# Speculative config: optionally cap the draft model's max_model_len (keeps draft KV tiny)
+if [ -n "$DRAFT_MAX_LEN" ]; then
+  SPEC_CONFIG="{\"method\":\"dflash\",\"num_speculative_tokens\":${NUM_SPEC},\"model\":\"/drafter\",\"max_model_len\":${DRAFT_MAX_LEN}}"
+else
+  SPEC_CONFIG="{\"method\":\"dflash\",\"num_speculative_tokens\":${NUM_SPEC},\"model\":\"/drafter\"}"
+fi
+# VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: pass through if set
+MEM_PROFILER_ARG="${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-}"
 
 # Optional tokenizer override (e.g. 27B ships tokenizer_class=TokenizersBackend which
 # AutoTokenizer cannot resolve; a patched overlay is mounted at /tokenizer).
@@ -73,7 +87,10 @@ docker run -d --name "$CONTAINER" \
   -e LD_PRELOAD=/usr/lib/aarch64-linux-gnu/nvidia/libcuda.so.1 \
   -e HF_HUB_DISABLE_XET=1 \
   -e VLLM_USE_FLASHINFER_MOE_FP4="$FP4" \
-  -e PYTORCH_ALLOC_CONF=expandable_segments:True \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  -e FASTSAFETENSORS_NOGDS=1 \
+  -e NCCL_IGNORE_CPU_AFFINITY=1 \
+  ${MEM_PROFILER_ARG:+-e VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS="$MEM_PROFILER_ARG"} \
   -v "${MODEL_DIR}:/model:ro" \
   -v "${DRAFT_DIR}:/drafter:ro" \
   -v "$HOME/thor-vllm-cache/vllm-dflash:/root/.cache/vllm" \
@@ -83,10 +100,10 @@ docker run -d --name "$CONTAINER" \
   vllm serve /model \
     --served-model-name "$MODEL_NAME" /model \
     "${TOK_ARG[@]}" \
-    --speculative-config "{\"method\":\"dflash\",\"num_speculative_tokens\":${NUM_SPEC},\"model\":\"/drafter\"}" \
+    --speculative-config "$SPEC_CONFIG" \
     --quantization compressed-tensors \
     --kv-cache-dtype auto \
-    --attention-backend flash_attn \
+    --attention-backend "$ATTENTION_BACKEND" \
     $MOE_ARG \
     $LOAD_FORMAT_ARG \
     $EAGER_ARG \
@@ -96,6 +113,7 @@ docker run -d --name "$CONTAINER" \
     --max-num-batched-tokens "$MAX_BATCHED" \
     --enable-chunked-prefill \
     --async-scheduling \
+    "${COMPILATION_CONFIG_ARGS[@]}" \
     --reasoning-parser qwen3 \
     --enable-auto-tool-choice \
     --tool-call-parser qwen3_coder \

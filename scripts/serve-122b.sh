@@ -45,15 +45,27 @@ export DRAFT_DIR="$HOME/models/Qwen3.5-122B-A10B-DFlash"
 export MODEL_NAME="Qwen3.5-122B-A10B-NVFP4"
 
 # ── 122B-specific tuning ──────────────────────────────────────────────────────
-export GPU_UTIL="${GPU_UTIL:-0.72}"          # 0.72×117GB=84GB; weights=72GB → 12GB headroom
-export MAX_LEN="${MAX_LEN:-16384}"           # short context: KV is tiny, but limit peak
-export MAX_SEQS="${MAX_SEQS:-1}"             # single sequence during profiling (critical)
-export MAX_BATCHED="${MAX_BATCHED:-4096}"    # profiling batch: 4096 tokens → ~5GB activations
-export MOE_BACKEND="${MOE_BACKEND:-marlin}"
-export NUM_SPEC="${NUM_SPEC:-15}"            # block_size=16 → k=15; do NOT change to 12
+# WORKING BACKENDS (proven 2026-06-06 on Thor SM110a):
+#   MoE backend MUST be cutlass — marlin FAULTS at 256-expert scale (silent exit 255 at the
+#   Marlin FP4 MoE weight-repack). cutlass (VLLM_CUTLASS) processes 256 experts cleanly.
+#   Attention MUST be TRITON_ATTN — flashinfer paged-decode hits a kv_cache_sf API mismatch
+#   (TypeError in BatchDecodeWithPagedKVCacheWrapper.run) in this dflash fork.
+#   triton MoE is REJECTED for NVFP4 ("not supported"); do not use it.
+export GPU_UTIL="${GPU_UTIL:-0.78}"          # 0.78 needed: DFlash draft eats ~2GB KV; 0.90 trips precheck
+export MAX_LEN="${MAX_LEN:-16384}"           # 70,924-token KV at 0.78; 4.33x concurrency
+export MAX_SEQS="${MAX_SEQS:-2}"
+export MAX_BATCHED="${MAX_BATCHED:-4096}"
+export MOE_BACKEND="${MOE_BACKEND:-cutlass}"        # NOT marlin (crashes at 256 experts)
+export ATTENTION_BACKEND="${ATTENTION_BACKEND:-TRITON_ATTN}"  # NOT flashinfer (kv_cache_sf bug)
+export NUM_SPEC="${NUM_SPEC:-12}"            # k=12 verified working; block_size=16 allows up to 15
+export DRAFT_MAX_LEN="${DRAFT_MAX_LEN:-1024}"       # cap draft KV so it doesn't starve target KV
 
 # Load format: fastsafetensors bypasses CPU staging buffer (core OOM fix for 122B)
 export LOAD_FORMAT="${LOAD_FORMAT:-fastsafetensors}"
+
+# Default CUDA-graph capture works with cutlass+TRITON_ATTN (the [1,13] Marlin/GDA workaround
+# is no longer needed once off the marlin MoE path). Override COMPILATION_CONFIG only if needed.
+export COMPILATION_CONFIG="${COMPILATION_CONFIG:-}"
 
 # CUDA graphs: ENABLED by default (ENFORCE_EAGER=0).
 # The real OOM causes (load-time double-copy + profiling activation peak) are fixed by the
