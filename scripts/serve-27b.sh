@@ -11,6 +11,7 @@ export GPU_UTIL="${GPU_UTIL:-0.85}"
 export MAX_LEN="${MAX_LEN:-65536}"
 export MAX_SEQS="${MAX_SEQS:-4}"
 export MOE_BACKEND="${MOE_BACKEND-marlin}"
+export NUM_SPEC="${NUM_SPEC:-15}"   # k-sweep optimal: k=15 (avg 42.3 tok/s, tau 5.9; dense model rewards max speculation)
 
 # ── build patched tokenizer overlay ────────────────────────────────────────────
 TOK_FIX="$HOME/dflash-setup/tokenizer-fix-27b"

@@ -172,3 +172,24 @@ LOWER tok/s — draft overhead exceeds the acceptance gain. serve-35b.sh default
 | emulation | SKIPPED — pure-fallback too slow (>8min/run), never used                |
 => 35B default MoE = marlin (~10% faster than cutlass). NOTE: opposite holds at 122B scale
 where marlin CRASHES (256 experts) and cutlass is the only option. MoE choice barely moves tau.
+
+## 27B (dense) k-sweep (flash_attn, gpu_util 0.85, max_len 65536, 120W)
+| k  | sorting   | lru        | dijkstra  | mixed     | tau_avg | avg tok/s |
+|----|-----------|------------|-----------|-----------|---------|-----------|
+| 8  | 41.9/5.89 | 37.7/5.08  | 35.8/4.77 | 37.1/4.94 | 5.17    | 38.1      |
+| 10 | 48.6/6.62 | 37.1/5.0   | 36.8/4.98 | 39.6/5.33 | 5.48    | 40.5      |
+| 12 | 44.8/6.22 | 37.2/5.11  | 37.5/5.12 | 45.9/6.34 | 5.70    | 41.4      |
+| 15 | 50.1/7.04 | 38.4/5.33  | 39.8/5.55 | 40.9/5.68 | 5.90    | 42.3 <- OPTIMAL |
+OPTIMAL k=15 (highest tok/s AND tau, wins 3/4 tasks). UNLIKE the MoE models (122B k=10, 35B
+k=12 where k=15 regressed): the DENSE 27B rewards max speculation — its target forward is
+memory-bandwidth-bound on 27B active params (expensive), so each accepted token saves a lot
+and draft overhead is small relative to the target cost. serve-27b.sh default set to k=15.
+
+## OPTIMAL-k SUMMARY (all three models, DFlash block_size=16, 120W, conc=1)
+| model        | active | optimal k | avg tok/s | why |
+|--------------|--------|-----------|-----------|-----|
+| 122B-A10B    | 10B    | 10        | ~45 (warm)| MoE; k=15 over-drafts |
+| 35B-A3B      | 3B     | 12        | 116.5     | MoE; k=15 tau up but tok/s down |
+| 27B (dense)  | 27B    | 15        | 42.3      | dense; expensive target rewards max k |
+Pattern: cheaper-per-token models (more active params => slower target) prefer HIGHER k; the
+fast MoE models hit the acceptance/overhead cliff sooner (lower optimal k).
