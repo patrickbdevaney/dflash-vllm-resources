@@ -1,0 +1,22 @@
+VLLM_MARLIN_USE_ATOMIC_ADD A/B — Sat Jun  6 06:36:53 PM EDT 2026
+
+=== 35B marlin k=12 WITH VLLM_MARLIN_USE_ATOMIC_ADD=1 ===
+(baseline no-flag from sweep: sorting 134.8/8.1 | lru 103.8/6.15 | dijkstra 113.9/5.13 | mixed 117.5/5.41)
+task         tok/s(e2e)    tau  tokens
+sorting           128.9   7.76     768
+lru               130.7   6.12     768
+dijkstra          101.3   4.54     768
+mixed             127.7   5.91     768
+SUMMARY_JSON {"sorting": {"tok_s": 128.9, "tau": 7.76}, "lru": {"tok_s": 130.7, "tau": 6.12}, "dijkstra": {"tok_s": 101.3, "tau": 4.54}, "mixed": {"tok_s": 127.7, "tau": 5.91}}
+
+=== 27B dense k=15 WITH VLLM_MARLIN_USE_ATOMIC_ADD=1 ===
+(baseline no-flag from sweep: sorting 50.1/7.04 | lru 38.4/5.33 | dijkstra 39.8/5.55 | mixed 40.9/5.68)
+(note: 27B dense uses FlashInferCutlass NVFP4 GEMM, not marlin -> flag expected to be a no-op)
+task         tok/s(e2e)    tau  tokens
+sorting            41.7   5.72     768
+lru                36.2   4.95     768
+dijkstra           37.1   5.07     768
+mixed              37.1   5.14     768
+SUMMARY_JSON {"sorting": {"tok_s": 41.7, "tau": 5.72}, "lru": {"tok_s": 36.2, "tau": 4.95}, "dijkstra": {"tok_s": 37.1, "tau": 5.07}, "mixed": {"tok_s": 37.1, "tau": 5.14}}
+
+=== atomic-add A/B DONE Sat Jun  6 06:51:22 PM EDT 2026 ===

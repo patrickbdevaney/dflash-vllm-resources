@@ -193,3 +193,43 @@ and draft overhead is small relative to the target cost. serve-27b.sh default se
 | 27B (dense)  | 27B    | 15        | 42.3      | dense; expensive target rewards max k |
 Pattern: cheaper-per-token models (more active params => slower target) prefer HIGHER k; the
 fast MoE models hit the acceptance/overhead cliff sooner (lower optimal k).
+
+================================================================================
+## Post-Sweep Optimization Results (2026-06-06)
+================================================================================
+### Optimizations applied
+| Optimization | 35B-A3B | 27B | 122B-A10B |
+|---|---|---|---|
+| VLLM_MARLIN_USE_ATOMIC_ADD=1 | ✓ (neutral, free) | ✗ no-op (dense=cutlass GEMM) | ✗ N/A (cutlass) |
+| VLLM_USE_FLASHINFER_SAMPLER=1 | ✓ | ✓ | ✓ |
+| CUDA_DEVICE_MAX_CONNECTIONS=1 | ✓ | ✓ | ✓ |
+| cudagraph_mode FULL_AND_PIECEWISE | already default | already default | already default |
+
+KEY FINDING: vLLM's DEFAULT cudagraph_mode in this fork is ALREADY FULL_AND_PIECEWISE (verified
+in EngineCore config dump). The plan's premise (current=PIECEWISE → switch for a big gain) does
+not hold — it was already FULL_AND_PIECEWISE. The 2 env vars + atomic-add are output-safe and
+free but throughput-NEUTRAL.
+
+### Clean measurement: 122B SAME-SESSION A/B (thermally controlled)
+| task | baseline (no opts) | optimized | delta |
+|------|--------------------|-----------|-------|
+| sorting | 56.7 | 52.3 | −7.8% |
+| lru | 37.4 | 39.4 | +5.3% |
+| dijkstra | 33.8 | 32.3 | −4.4% |
+| mixed | 37.3 | 41.7 | +11.8% |
+| AVG | 41.3 | 41.4 | +0.2% (NEUTRAL) |
+Per-task scatter is pure run variance. Cross-session 35B (−4%) / 27B (−10%) deltas vs the sweep
+baselines are THERMAL DRIFT (system ran ~9h continuous at 120W, hotter than at sweep time), NOT
+the optimizations — proven by this thermally-controlled same-session A/B showing +0.2%.
+
+DECISION: keep the 2 free env vars + atomic-add (output-safe, validated clean quicksort on all
+models). Do NOT bake the cudagraph_capture_sizes [1,k+1] restriction into serve defaults (no
+conc=1 benefit; would force eager fallback at conc>1). Serve scripts use the default cudagraph
+(already FULL_AND_PIECEWISE).
+
+### 122B aux hidden state (vLLM #43986)
+Draft config use_aux_hidden_state: NOT FOUND. gpu_model_runner.py defaults
+use_aux_hidden_state_outputs=False. Draft does not request it → wasteful-write path not
+triggered. Action: none needed (no patch).
+
+See benchmarks/ for per-model detail files.

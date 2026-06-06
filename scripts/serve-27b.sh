@@ -12,6 +12,11 @@ export MAX_LEN="${MAX_LEN:-65536}"
 export MAX_SEQS="${MAX_SEQS:-4}"
 export MOE_BACKEND="${MOE_BACKEND-marlin}"
 export NUM_SPEC="${NUM_SPEC:-15}"   # k-sweep optimal: k=15 (avg 42.3 tok/s, tau 5.9; dense model rewards max speculation)
+# Decode optimizations (output-safe). NOTE: 27B is DENSE -> NVFP4 GEMM is FlashInfer-Cutlass, not
+# marlin, so VLLM_MARLIN_USE_ATOMIC_ADD is a NO-OP here (kept for parity; verified no effect).
+export VLLM_MARLIN_USE_ATOMIC_ADD="${VLLM_MARLIN_USE_ATOMIC_ADD:-1}"   # no-op on dense 27B
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-1}" # GPU-side sampling, no host round-trip
+export CUDA_DEVICE_MAX_CONNECTIONS="${CUDA_DEVICE_MAX_CONNECTIONS:-1}" # single cmd queue, less jitter at conc=1
 
 # ── build patched tokenizer overlay ────────────────────────────────────────────
 TOK_FIX="$HOME/dflash-setup/tokenizer-fix-27b"

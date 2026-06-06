@@ -59,6 +59,9 @@ export MOE_BACKEND="${MOE_BACKEND:-cutlass}"        # NOT marlin (crashes at 256
 export ATTENTION_BACKEND="${ATTENTION_BACKEND:-TRITON_ATTN}"  # NOT flashinfer (kv_cache_sf bug)
 export NUM_SPEC="${NUM_SPEC:-10}"            # k-sweep optimal: k=10 (tau 5.2); k=12 ~tied; k=15 regresses
 export DRAFT_MAX_LEN="${DRAFT_MAX_LEN:-1024}"       # cap draft KV so it doesn't starve target KV
+# Decode optimizations (output-safe). NO atomic-add: 122B uses cutlass MoE, not marlin.
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-1}" # GPU-side sampling, no host round-trip
+export CUDA_DEVICE_MAX_CONNECTIONS="${CUDA_DEVICE_MAX_CONNECTIONS:-1}" # single cmd queue, less jitter at conc=1
 
 # Load format: fastsafetensors bypasses CPU staging buffer (core OOM fix for 122B)
 export LOAD_FORMAT="${LOAD_FORMAT:-fastsafetensors}"
