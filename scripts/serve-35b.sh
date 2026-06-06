@@ -9,4 +9,5 @@ export GPU_UTIL="${GPU_UTIL:-0.78}"
 export MAX_LEN="${MAX_LEN:-65536}"
 export MAX_SEQS="${MAX_SEQS:-4}"
 export MOE_BACKEND="${MOE_BACKEND-marlin}"
+export NUM_SPEC="${NUM_SPEC:-12}"   # k-sweep optimal: k=12 (avg 116.5 tok/s, tau 6.25); k=15 tau higher but slower
 source "$(dirname "$0")/_common.sh"

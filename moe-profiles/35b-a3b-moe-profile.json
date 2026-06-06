@@ -1,0 +1,32 @@
+{
+  "model": "Qwen3.6-35B-A3B-NVFP4",
+  "architecture": "Qwen3Moe (A3B, ~3B active params/token)",
+  "quantization": "compressed-tensors (nvfp4-pack-quantized)",
+  "hardware": "Jetson AGX Thor sm_110a, 117GB unified LPDDR5X",
+  "image": "vllm-dflash-thor:fa-native (vLLM 0.20.0.dev0+dflash)",
+  "date": "2026-06-06",
+  "power_mode": "120W (ID=1)",
+  "recommended_moe_backend": "marlin",
+  "recommended_attention_backend": "flash_attn",
+  "recommended_k": 12,
+  "moe_profile_at_k12": {
+    "comment": "tok/s/tau per task, 3-run median. marlin is fastest -> default.",
+    "marlin":    {"sorting": "134.8/8.1", "lru": "103.8/6.15", "dijkstra": "113.9/5.13", "mixed": "117.5/5.41", "avg_tok_s": 117.5, "status": "WORKS - fastest"},
+    "cutlass":   {"sorting": "114.5/8.56", "lru": "83.3/6.02", "dijkstra": "96.2/4.74", "mixed": "131.0/6.25", "avg_tok_s": 106.3, "status": "WORKS - ~10% slower than marlin"},
+    "emulation": {"status": "SKIPPED - pure-fallback path too slow to bench (>8 min/run); never used"}
+  },
+  "k_sweep": {
+    "comment": "marlin MoE + flash_attn, gpu_util 0.78, max_model_len 65536, 120W. tok/s/tau per task.",
+    "k8":  {"sorting": "121.4/6.61", "lru": "98.8/5.72",  "dijkstra": "82.1/4.5",  "mixed": "89.6/5.03",  "tau_avg": 5.46, "avg_tok_s": 98.0},
+    "k10": {"sorting": "130.4/7.55", "lru": "97.2/5.93",  "dijkstra": "93.2/4.66", "mixed": "127.9/5.52", "tau_avg": 5.92, "avg_tok_s": 112.2},
+    "k12": {"sorting": "137.1/8.56", "lru": "100.5/6.08", "dijkstra": "104.0/4.76","mixed": "124.2/5.61", "tau_avg": 6.25, "avg_tok_s": 116.5, "optimal": true},
+    "k15": {"sorting": "139.1/8.86", "lru": "98.7/6.27",  "dijkstra": "98.0/4.81", "mixed": "111.1/5.35", "tau_avg": 6.32, "avg_tok_s": 111.7, "note": "tau highest but tok/s drops - draft overhead exceeds acceptance gain"}
+  },
+  "launch_params": {
+    "gpu_memory_utilization": 0.78,
+    "max_model_len": 65536,
+    "max_num_seqs": 4,
+    "kv_cache_dtype": "auto",
+    "speculative_config": {"method": "dflash", "num_speculative_tokens": 12, "model": "/draft"}
+  }
+}

@@ -153,3 +153,22 @@ Image vllm-dflash-thor:fa-native. Stable, health 200, coherent output, finish_re
   warm for k=10/12/15 via mounted ~/.triton). tau is cache-independent and comparable.
 OPTIMAL k=10: highest avg tau (5.20) + best on dijkstra/lru; k=12 ~tied; k=15 over-drafts
 (acceptance cliff -> wasted target compute -> lower tok/s). serve-122b.sh default set to k=10.
+
+## 35B-A3B k-sweep (marlin MoE + flash_attn, gpu_util 0.78, max_len 65536, 120W)
+| k  | sorting    | lru        | dijkstra   | mixed      | tau_avg | avg tok/s |
+|----|------------|------------|------------|------------|---------|-----------|
+| 8  | 121.4/6.61 | 98.8/5.72  | 82.1/4.5   | 89.6/5.03  | 5.46    | 98.0      |
+| 10 | 130.4/7.55 | 97.2/5.93  | 93.2/4.66  | 127.9/5.52 | 5.92    | 112.2     |
+| 12 | 137.1/8.56 | 100.5/6.08 | 104.0/4.76 | 124.2/5.61 | 6.25    | 116.5 <- OPTIMAL |
+| 15 | 139.1/8.86 | 98.7/6.27  | 98.0/4.81  | 111.1/5.35 | 6.32    | 111.7     |
+OPTIMAL k=12 (highest avg tok/s, wins lru/dijkstra/mixed). k=15 has marginally higher tau but
+LOWER tok/s — draft overhead exceeds the acceptance gain. serve-35b.sh default set to k=12.
+
+## 35B-A3B MoE-backend profile @ k=12 (tok/s/tau per task)
+| backend   | sorting    | lru        | dijkstra   | mixed      | avg tok/s |
+|-----------|------------|------------|------------|------------|-----------|
+| marlin    | 134.8/8.1  | 103.8/6.15 | 113.9/5.13 | 117.5/5.41 | 117.5 <- fastest |
+| cutlass   | 114.5/8.56 | 83.3/6.02  | 96.2/4.74  | 131.0/6.25 | 106.3     |
+| emulation | SKIPPED — pure-fallback too slow (>8min/run), never used                |
+=> 35B default MoE = marlin (~10% faster than cutlass). NOTE: opposite holds at 122B scale
+where marlin CRASHES (256 experts) and cutlass is the only option. MoE choice barely moves tau.

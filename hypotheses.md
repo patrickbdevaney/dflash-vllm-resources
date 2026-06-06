@@ -10,21 +10,18 @@ can starve the OS), vLLM 0.20.0.dev0+dflash, NVFP4 models. Single-stream interac
 
 ---
 
-## TIER 1 — Safe, high payoff (apply + measure)
+## DECISION (2026-06-06): what is actually a software-level decode optimization
+Reviewed against this specific stack (NVFP4 + DFlash + cutlass/marlin + TRITON_ATTN/flash_attn,
+conc=1). VERDICT: the only items worth applying are (a) **optimal k** — done via the k-sweeps —
+and (b) **VLLM_MARLIN_USE_ATOMIC_ADD=1** (a real kernel reduction change). Everything else below
+is either NOT a software optimization or jeopardizes the setup for ~no decode gain. We will NOT
+apply H1/H3/H4/H5/H6. They are kept here as documented, deliberately-rejected proposals.
+- "Cutlass vs Marlin A/B on 122B" is NOT runnable: marlin HARD-CRASHES at 256 experts (exit 255
+  at the FP4 MoE repack). cutlass is the ONLY backend that loads — there is no A/B.
 
-### H1. MAXN power mode (`nvpmodel -m 0` + `jetson_clocks`)  ★ headline
-- **Current state:** Thor is at power mode **ID=1 (120W)**, NOT MAXN (ID=0). All sweeps so far
-  ran at 120W.
-- **Expected effect:** Largest free lever on Thor. NVIDIA documents up to 3.3–3.5× model-level
-  gains from max power+clocks; a comparable MoE went 34→81 tok/s single-stream from the right
-  power/kernel setup. Realistic decode uplift here: meaningful double-digit %.
-- **OOM/launch risk:** NONE — power/clock only, no memory change.
-- **Test:** `sudo nvpmodel -m 0 && sudo jetson_clocks`; re-run the same benchmark at fixed config
-  (e.g. 122B k=best) and compare tok/s vs the 120W number.
-- **Revert:** `sudo nvpmodel -m 1` (back to 120W). Thermals: MAXN throttles if module power
-  exceeds TDP, so it's "max allowed," monitor `tegrastats`.
+## REAL software lever (apply + measure)
 
-### H2. `VLLM_MARLIN_USE_ATOMIC_ADD=1` (35B/27B marlin path only)
+### H2. `VLLM_MARLIN_USE_ATOMIC_ADD=1` (35B/27B marlin path only)  ★ the one to test
 - **Expected effect:** atomicAdd reduction in the marlin kernels can speed the marlin MoE/dense
   GEMM on the 35B/27B (NOT the 122B, which is cutlass). Small single-digit % plausible.
 - **OOM/launch risk:** None (no footprint change). Verify output correctness (atomic ordering).
@@ -42,7 +39,13 @@ can starve the OS), vLLM 0.20.0.dev0+dflash, NVFP4 models. Single-stream interac
 
 ---
 
-## TIER 2 — Likely-safe, may be no-op for DFlash (gate behind smoke test)
+## REJECTED — not a software optimization, or jeopardizes the GDA/DFlash setup for no decode gain
+### H1. MAXN power mode (`nvpmodel -m 0` + `jetson_clocks`)  — REJECTED as an "optimization"
+Removing a power/thermal ceiling = overclocking, not a software lever. It shifts the benchmark
+baseline, not the stack. User can pull it anytime (`sudo nvpmodel -m 0`) + reboot; all sweeps
+here ran at 120W (ID=1) consistently, so comparisons are valid. Not applied.
+
+## TIER 2 — Likely-safe, may be no-op for DFlash (gate behind smoke test) — NOT applied per decision above
 
 ### H4. `disable_padded_drafter_batch: true` in speculative-config
 - **Expected effect:** removes draft-input padding → less wasted draft compute → higher decode
