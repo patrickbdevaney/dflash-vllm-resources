@@ -20,6 +20,8 @@ NUM_SPEC="${NUM_SPEC:-15}"
 IMAGE="${IMAGE:-vllm-dflash-thor:fa-native}"
 FP4="${VLLM_USE_FLASHINFER_MOE_FP4:-0}"
 MOE_BACKEND="${MOE_BACKEND:-}"
+LOAD_FORMAT="${LOAD_FORMAT:-}"          # e.g. "fastsafetensors" for 122B unified-memory safety
+ENFORCE_EAGER="${ENFORCE_EAGER:-0}"     # set to 1 to skip CUDA graph capture (first 122B launch)
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-900}"   # seconds to wait for /health
 
 [ -f "$MODEL_DIR/config.json" ] || { echo "ERROR: base model config not found: $MODEL_DIR"; exit 1; }
@@ -31,6 +33,7 @@ echo " Base  : $MODEL_DIR"
 echo " Draft : $DRAFT_DIR   (DFlash, k=$((NUM_SPEC+1)) -> num_speculative_tokens=$NUM_SPEC)"
 echo " Port  : $PORT   gpu_util=$GPU_UTIL  max_len=$MAX_LEN  max_seqs=$MAX_SEQS"
 echo " MoE   : backend='${MOE_BACKEND:-auto}'  VLLM_USE_FLASHINFER_MOE_FP4=$FP4"
+echo " Load  : format='${LOAD_FORMAT:-auto}'  enforce_eager=${ENFORCE_EAGER}"
 echo " Image : $IMAGE"
 echo "================================================================"
 
@@ -50,7 +53,9 @@ sudo nvpmodel -m 1 >/dev/null 2>&1 && echo "nvpmodel: max" || true
 sudo jetson_clocks >/dev/null 2>&1 && echo "jetson_clocks: locked" || true
 
 CONTAINER="vllm-dflash-$(date +%s)"
-MOE_ARG=""; [ -n "$MOE_BACKEND" ] && MOE_ARG="--moe-backend $MOE_BACKEND"
+MOE_ARG="";         [ -n "$MOE_BACKEND" ]       && MOE_ARG="--moe-backend $MOE_BACKEND"
+LOAD_FORMAT_ARG=""; [ -n "$LOAD_FORMAT" ]        && LOAD_FORMAT_ARG="--load-format $LOAD_FORMAT"
+EAGER_ARG="";       [ "${ENFORCE_EAGER}" = "1" ] && EAGER_ARG="--enforce-eager"
 
 # Optional tokenizer override (e.g. 27B ships tokenizer_class=TokenizersBackend which
 # AutoTokenizer cannot resolve; a patched overlay is mounted at /tokenizer).
@@ -83,6 +88,8 @@ docker run -d --name "$CONTAINER" \
     --kv-cache-dtype auto \
     --attention-backend flash_attn \
     $MOE_ARG \
+    $LOAD_FORMAT_ARG \
+    $EAGER_ARG \
     --gpu-memory-utilization "$GPU_UTIL" \
     --max-model-len "$MAX_LEN" \
     --max-num-seqs "$MAX_SEQS" \

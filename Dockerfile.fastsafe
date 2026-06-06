@@ -1,0 +1,10 @@
+FROM vllm-dflash-thor:fa-native
+# fastsafetensors: direct disk→GPU loading, bypasses CPU staging buffer.
+# On Thor unified memory this prevents 72GB(GPU) + 72GB(CPU mmap) = 144GB peak
+# during 122B weight load (117GB physical pool → system crash without this fix).
+#
+# If no aarch64 wheel is available or build fails, the install is skipped and
+# serve-122b.sh falls back to standard loader + aggressive kernel page reclaim.
+RUN /opt/venv/bin/pip install --no-cache-dir fastsafetensors \
+    && python -c "import fastsafetensors; print('fastsafetensors OK:', fastsafetensors.__version__)" \
+    || echo "WARNING: fastsafetensors install failed — fallback loader will be used"
