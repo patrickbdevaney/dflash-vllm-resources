@@ -57,7 +57,7 @@ export MAX_SEQS="${MAX_SEQS:-2}"
 export MAX_BATCHED="${MAX_BATCHED:-4096}"
 export MOE_BACKEND="${MOE_BACKEND:-cutlass}"        # NOT marlin (crashes at 256 experts)
 export ATTENTION_BACKEND="${ATTENTION_BACKEND:-TRITON_ATTN}"  # NOT flashinfer (kv_cache_sf bug)
-export NUM_SPEC="${NUM_SPEC:-12}"            # k=12 verified working; block_size=16 allows up to 15
+export NUM_SPEC="${NUM_SPEC:-10}"            # k-sweep optimal: k=10 (tau 5.2); k=12 ~tied; k=15 regresses
 export DRAFT_MAX_LEN="${DRAFT_MAX_LEN:-1024}"       # cap draft KV so it doesn't starve target KV
 
 # Load format: fastsafetensors bypasses CPU staging buffer (core OOM fix for 122B)

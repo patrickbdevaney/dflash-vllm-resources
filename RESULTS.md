@@ -141,3 +141,15 @@ Base (no DFlash): 10.9 tok/s (cold, Dijkstra).  GPU KV cache 70,924 tokens, conc
 | mixed    |                    38.0 | 4.66 |
 DFlash uplift on Dijkstra: 34.7 warm vs 10.9 cold base. Acceptance tau 4.2-6.5 (healthy).
 Image vllm-dflash-thor:fa-native. Stable, health 200, coherent output, finish_reason ok.
+
+## 122B k-sweep (num_speculative_tokens; cutlass MoE + TRITON_ATTN, gpu_util 0.78, 120W)
+| k  | sorting tok/s/tau | lru        | dijkstra   | mixed      | tau_avg |
+|----|-------------------|------------|------------|------------|---------|
+| 8  | 25.4/5.16 *       | 40.5/4.47  | 34.3/3.71  | 43.1/4.78  | 4.53    |
+| 10 | 52.6/6.36         | 45.9/5.36  | 40.0/4.49  | 40.5/4.6   | 5.20 <- OPTIMAL |
+| 12 | 53.2/6.45         | 44.2/5.18  | 35.5/4.2   | 39.6/4.66  | 5.12    |
+| 15 | 44.2/5.76         | 41.2/5.31  | 31.0/3.86  | 34.2/4.31  | 4.81    |
+* k=8 ran first with COLD triton/cutlass autotune caches -> its tok/s is biased low (caches
+  warm for k=10/12/15 via mounted ~/.triton). tau is cache-independent and comparable.
+OPTIMAL k=10: highest avg tau (5.20) + best on dijkstra/lru; k=12 ~tied; k=15 over-drafts
+(acceptance cliff -> wasted target compute -> lower tok/s). serve-122b.sh default set to k=10.
