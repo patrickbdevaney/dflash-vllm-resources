@@ -233,3 +233,20 @@ use_aux_hidden_state_outputs=False. Draft does not request it → wasteful-write
 triggered. Action: none needed (no patch).
 
 See benchmarks/ for per-model detail files.
+
+================================================================================
+## 4B Dense (GDA-hybrid) DFlash k-sweep (2026-06-06)
+================================================================================
+Qwen3.5-4B-NVFP4 (dense GDA-hybrid VLM, 32 layers, --language-model-only) + 4B-DFlash draft.
+compressed-tensors load, flash_attn, gpu-util 0.40, max_len 32768, conc=1, capture [1,k+1].
+Autoregressive baseline (no DFlash), Dijkstra: 47.9 tok/s (35% of 136.5 ceiling — overhead-bound).
+
+| k  | sorting    | lru        | dijkstra   | mixed      | tau_avg | avg tok/s |
+|----|------------|------------|------------|------------|---------|-----------|
+| 8  | 120.7/5.08 | 108.1/4.48 | 148.1/4.52 | 142.2/4.34 | 4.61    | 129.8     |
+| 10 | 129.3/5.42 | 145.2/4.72 | 152.2/4.68 | 146.7/4.5  | 4.83    | 143.4     |
+| 12 | 143.8/6.19 | 139.3/5.12 | 143.6/4.44 | 127.2/3.92 | 4.92    | 138.5     |
+| 15 | 130.6/5.75 | 141.0/4.57 | 135.5/4.37 | 155.8/5.01 | 4.92    | 140.7     |
+Optimal k=15 (highest mixed 155.8); k=10 best 4-task avg (143.4) — both within noise.
+DFlash peak 155.8 tok/s (mixed). Dijkstra 47.9 -> 152.2 = 3.2x over autoregressive.
+4B best DFlash 155.8 = 114% of the 136.5 ceiling (tau amortization, same mechanism as 27B/122B).
